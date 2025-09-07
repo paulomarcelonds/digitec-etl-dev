@@ -1,6 +1,6 @@
 CREATE SCHEMA IF NOT EXISTS dev;
 
-CREATE TABLE dev.servicos (
+CREATE TABLE dev.servico_ads(
     data           TIMESTAMP,
     contrato       VARCHAR(25),
     cop            VARCHAR(25),

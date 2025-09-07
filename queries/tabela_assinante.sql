@@ -21,7 +21,6 @@ CREATE TABLE dev.assinante (
     data_alteracao TIMESTAMP,
     responsavel VARCHAR(50),
     ingestion_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-
 );
 
 -- Criar índices

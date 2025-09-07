@@ -1,100 +1,133 @@
 import os
-import shutil
 import pandas as pd
-import psycopg2
+from sqlalchemy import create_engine
+from datetime import datetime
+import shutil
 
-# Configuração da conexão PostgreSQL
-DB_CONFIG = {
-    "dbname": "postgres",
-    "user": "postgres",
-    "password": "1131",
-    "host": "localhost",
-    "port": "5432"
-}
+# Configurações do banco
+DB_USER = "postgres"
+DB_PASS = "1131"
+DB_HOST = "localhost"
+DB_PORT = "5432"
+DB_NAME = "postgres"
 
+# Pastas de origem e destino
+BASE_DIR_ATENDIMENTO = os.path.join(os.path.dirname(__file__), "source", "raw", "atendimento")
+DEST_DIR_ATENDIMENTO = os.path.join(os.path.dirname(__file__), "source", "process", "atendimento-process")
 
-def ingestao_csv(tabela, pasta_entrada, pasta_saida):
-    conn = psycopg2.connect(**DB_CONFIG)
-    cur = conn.cursor()
+BASE_DIR_ASSINANTE = os.path.join(os.path.dirname(__file__), "source", "raw", "assinante")
+DEST_DIR_ASSINANTE = os.path.join(os.path.dirname(__file__), "source", "process", "assinante-process")
 
-    for arquivo in os.listdir(pasta_entrada):
-        if arquivo.endswith(".csv"):
-            caminho = os.path.join(pasta_entrada, arquivo)
-            df = pd.read_csv(caminho)
+# Conexão com Postgres
+engine = create_engine(f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
 
-            for _, row in df.iterrows():
-                cols = list(df.columns)
-                valores = [row[c] for c in cols]
-                placeholders = ",".join(["%s"] * len(cols))
-                query = f'INSERT INTO {tabela} ({",".join(cols)}) VALUES ({placeholders})'
-                cur.execute(query, valores)
+def ingest_atendimento():
+    for file in os.listdir(BASE_DIR_ATENDIMENTO):
+        if file.endswith(".csv"):
+            file_path = os.path.join(BASE_DIR_ATENDIMENTO, file)
+            print(f"Ingerindo arquivo: {file_path}")
 
-            conn.commit()
-            shutil.move(caminho, os.path.join(pasta_saida, arquivo))
-            print(f"{arquivo} carregado em {tabela} ✅")
+            df = pd.read_csv(file_path)
 
-    cur.close()
-    conn.close()
+            ingestion_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            df["ingestion_time"] = ingestion_time
 
+            df.to_sql("atendimento", engine, schema="dev", if_exists="append", index=False)
 
-def ingestao_excel(tabela, pasta_entrada, pasta_saida):
-    conn = psycopg2.connect(**DB_CONFIG)
-    cur = conn.cursor()
+            new_name = f"{ingestion_time.replace('-', '').replace(':', '').replace(' ', '_')}_{file}"
+            dest_path = os.path.join(DEST_DIR_ATENDIMENTO, new_name)
+            shutil.move(file_path, dest_path)
 
-    for arquivo in os.listdir(pasta_entrada):
-        if arquivo.endswith(".xlsx") or arquivo.endswith(".xls"):
-            caminho = os.path.join(pasta_entrada, arquivo)
-            df = pd.read_excel(caminho)
-
-            for _, row in df.iterrows():
-                cols = list(df.columns)
-                valores = [row[c] for c in cols]
-                placeholders = ",".join(["%s"] * len(cols))
-                query = f'INSERT INTO {tabela} ({",".join(cols)}) VALUES ({placeholders})'
-                cur.execute(query, valores)
-
-            conn.commit()
-            shutil.move(caminho, os.path.join(pasta_saida, arquivo))
-            print(f"{arquivo} carregado em {tabela} ✅")
-
-    cur.close()
-    conn.close()
+            print(f"Arquivo {file} ingerido e movido para {dest_path}.")
 
 
-# Chamadas para cada tabela
-def ingestao_atendimento():
-    ingestao_csv("atendimento",
-        r"C:\workspace\digitec-etl-dev\source\atendimento",
-        r"C:\workspace\digitec-etl-dev\source\atendimento-process")
 
+def ingest_assinante():
+    source_folder = "source/raw/assinante"
+    processed_folder = "source/process/assinante-process"
+    os.makedirs(processed_folder, exist_ok=True)
 
-def ingestao_atlas():
-    ingestao_excel("atlas",
-        r"C:\workspace\digitec-etl-dev\source\atendimento-process",
-        r"C:\workspace\digitec-etl-dev\source\atlas-process")
+    for file_name in os.listdir(source_folder):
+        if file_name.endswith(".xls"):
+            file_path = os.path.join(source_folder, file_name)
+            print(f"Ingerindo arquivo Excel: {file_path}")
 
+            try:
+                # Lê como HTML (já que o .xls é HTML disfarçado)
+                dfs = pd.read_html(file_path, header=0)
+                df = dfs[0]
 
-def ingestao_assinante():
-    ingestao_excel("assinante",
-        r"C:\workspace\digitec-etl-dev\source\assinante",
-        r"C:\workspace\digitec-etl-dev\source\assinante-process")
+                # Mapeamento das colunas
+                column_mapping = {
+                    "Série / Ender. Princ.": "serie_ender_princ",
+                    "Tipo": "tipo",
+                    "Modelo": "modelo",
+                    "Material SAP": "material_sap",
+                    "Item JDE": "item_jde",
+                    "Estado": "estado",
+                    "Local": "local",
+                    "Tipo Local": "tipo_local",
+                    "Perfil Local": "perfil_local",
+                    "Contrato NETSMS": "contrato_netsms",
+                    "Tipo Contrato UNO": "tipo_contrato_uno",
+                    "Operação": "operacao",
+                    "Empresa Material": "empresa_material",
+                    "Tipo Mercadoria": "tipo_mercadoria",
+                    "Reusos": "reusos",
+                    "Data da Alteração": "data_alteracao",
+                    "Responsável": "responsavel",
+                }
 
+                # Renomeia colunas conforme mapping
+                df = df.rename(columns=column_mapping)
 
-def ingestao_consolidado():
-    ingestao_excel("consolidado",
-        r"C:\workspace\digitec-etl-dev\source\consolidado",
-        r"C:\workspace\digitec-etl-dev\source\consolidado-process")
+                # Mantém apenas as colunas esperadas
+                expected_columns = list(column_mapping.values())
+                df = df[expected_columns]
 
+                # Extrai apenas a parte direita de "serie_ender_princ"
+                df["serie_ender_princ"] = (
+                    df["serie_ender_princ"]
+                    .astype(str)
+                    .str.split("/")
+                    .str[-1]        # pega a parte à direita da barra
+                    .str.strip()    # remove espaços extras
+                    .str.split(" ") # divide pelo espaço
+                    .str[0]         # pega só o primeiro "token"
+                )
 
-def ingestao_servicos():
-    ingestao_excel("servicos",
-        r"C:\workspace\digitec-etl-dev\source\servico",
-        r"C:\workspace\digitec-etl-dev\source\servico-process")
+                # Limpa e converte coluna de data
+                if "data_alteracao" in df.columns:
+                    df["data_alteracao"] = (
+                        df["data_alteracao"]
+                        .astype(str)
+                        .str.strip()
+                        .str.replace(r"\s+", " ", regex=True)  # substitui múltiplos espaços por 1
+                    )
+                    df["data_alteracao"] = pd.to_datetime(
+                        df["data_alteracao"],
+                        errors="coerce",
+                        dayfirst=True  # porque o formato é dd/mm/yyyy
+                    )
+
+                # Adiciona ingestion_time
+                ingestion_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                df["ingestion_time"] = ingestion_time
+
+                # Insere no Postgres
+                df.to_sql("assinante", engine, schema="dev", if_exists="append", index=False)
+
+                # Renomeia e move o arquivo
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                new_file_name = f"{timestamp}.xls"
+                shutil.move(file_path, os.path.join(processed_folder, new_file_name))
+
+                print(f"Arquivo {file_name} ingerido e movido para {processed_folder} como {new_file_name}")
+
+            except Exception as e:
+                print(f"Erro ao processar {file_name}: {e}")
 
 
 if __name__ == "__main__":
-    ingestao_atendimento()
-    ingestao_atlas()
-    ingestao_assinante()
-    ingestao_consolidado()
-    ingestao_servicos()
+    ingest_atendimento()
+    ingest_assinante()
